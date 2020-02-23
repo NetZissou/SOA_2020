@@ -1,0 +1,389 @@
+---
+title: "SOA Research"
+author: "Net"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+
+```{r setup, echo=FALSE, cache=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+# Initial Settings
+```{r message=FALSE, warning=FALSE}
+# Package Loading========================
+# Package Loading========================
+library(tidyverse)
+library(ggthemr)
+library(ggthemr)
+library(ggcorrplot)
+ggthemr("fresh", type="outer", layout="scientific", spacing=2)
+library(scales)
+library(ggridges)
+library(imputeTS)
+# Data Loading===========================
+biocpacity <- read_csv("Biocapacity by Source.csv")
+co2emission <- read_csv("CO2e Emissions by SectorSource.csv")
+company <- read_csv("CompanyData.csv")
+ecofootprint <- read_csv("Ecological Footprint by Source.csv")
+
+country_data <- co2emission %>%
+  select(Year, population, gdp, land_area, forested_land, percent_population,
+         energy_use, renewable_energy)
+co2emission <- co2emission %>% 
+  select(-population, -gdp, -land_area, -forested_land, -percent_population,
+         -energy_use, -renewable_energy)
+```
+# General Assumptions
+
+* No commission charges or extra fees during the carbon credits transaction
+
+* 
+
+# Data Manipulation
+```{r}
+# Merge in columns =======================================
+biocpacity <- biocpacity %>%
+  pivot_longer(c("Built_up_Land","Cropland",
+                 "Fishing_Grounds","Forest_Products",
+                 "Grazing_Land", "Biocapacity_Total"),
+               names_to = "Type"
+               )
+co2emission <- co2emission %>%
+  pivot_longer(c("B","E","I","O","T","W", "Emission_Total"),
+               names_to = "Type")
+## Hold on to the rest: ecofootprint, company
+```
+
+# Insights through Visulization
+## General emission trend
+```{r}
+# Have a look =============================================
+# DATASET: co2emission
+## General emission trend
+co2emission %>%
+  filter(Type == "Emission_Total") %>%
+  ggplot(aes(x = Year, y = value)) +
+  geom_point(aes(size = log(value) * 100), alpha = 0.5) +
+  geom_line(size = 1.5) +
+  scale_x_continuous(breaks = c(1999, 2005, 2011, 2015, 2019)) +
+  geom_vline(xintercept = 2001, linetype = 2, color = "orange", size = 1.2) +
+  geom_vline(xintercept = 2011, linetype = 2, color = "orange", size = 1.2) +
+  labs(x = "Year", y = "Co2e Emission") +
+  ggtitle("CO2e Emission Trend",
+          subtitle = "emission of co2e started dropping since 2011") +
+  theme(panel.grid.major.x = element_blank(),
+        legend.position = "none")
+```
+
+## Trend in different type
+```{r}
+## Trend in different type
+co2emission %>%
+  filter(Type != "Emission_Total") %>%
+  ggplot() +
+  geom_bar(aes(x = Year, y = value, fill = value),
+           stat = "identity") +
+  facet_wrap(~Type) +
+  ggtitle("Emission of Sectors",
+          "Max Emission Sector: Energy, Manufacturing and Construction ") +
+  theme(legend.title = element_blank())
+```
+
+## Biocpacity
+```{r}
+# DATASET: biocpacity
+## The total biocpacity didn't had many alteration
+biocpacity %>%
+  filter(Type != "Biocapacity_Total") %>%
+  ggplot() +
+  geom_bar(aes(x = Year, y = value, fill = Type), 
+           stat = "identity", position = "stack") +
+  labs(x = "Year", y = "Biocapacity Contribution") +
+  ggtitle("Biocapacity Contribution Trend",
+          "The total emission capacity and the proportion had little alteration")
+```
+
+# Tricky Companies
+## About the data
+See the proportion of missing values.
+```{r}
+all_zeros <- (company$`2019` == 0) & (company$`2018` == 0) &
+       (company$`2017` == 0) & (company$`2016` == 0) &
+       (company$`2015` == 0)
+have_zero <- (company$`2019` == 0) | (company$`2018` == 0) |
+       (company$`2017` == 0) | (company$`2016` == 0) |
+       (company$`2015` == 0)
+print(
+  paste0("There are ", round(mean(all_zeros, na.rm = T),4)*100, 
+         "% of company that have no data")
+)
+print(
+  paste0(round(mean(have_zero, na.rm = T), 4)*100, 
+         "% of company have at least one 0")
+)
+```
+
+```{r}
+company <- company %>%
+  filter(!((company$`2019` == 0) && (company$`2018` == 0) &&
+       (company$`2017` == 0) && (company$`2016` == 0) &&
+       (company$`2015` == 0))) %>%
+  na_if(0)
+round(colMeans(is.na(company)),2)
+```
+
+Besides, there exist some companies that have multiple sectors. We just deleted those since there only a few observations. 
+```{r}
+table(company$`Company ID`) %>% as.data.frame() %>% arrange(-Freq) %>% head(10)
+```
+There are 1049 locations in total.
+
+## Impute the missing values
+
+* linear interpolatation
+
+```{r warning=FALSE}
+temp_df <- company %>%
+  filter(!(`Company ID` %in% c(5.48531e+12, 2.45743e+13,
+                               1.1289e+13, 2.02059e+13,
+                               2.73896e+13, 3.66985e+13,
+                               8.7252e+13, 8.82264e+13))
+         ) %>%
+  select(`2019`:`2015`)
+rownames(temp_df) <- company %>%
+  filter(!(`Company ID` %in% c(5.48531e+12, 2.45743e+13,
+                               1.1289e+13, 2.02059e+13,
+                               2.73896e+13, 3.66985e+13,
+                               8.7252e+13, 8.82264e+13))) %>%
+  pull(`Company ID`)
+
+d <- temp_df %>%
+  rownames_to_column %>%
+  gather(var, value, -rowname) %>%
+  spread(rowname, value)
+
+d_noNA <- d %>% select(var) %>%
+  cbind(
+    na_interpolation(d[-1], option = "linear")
+  )
+
+
+rownames(d_noNA) <- d_noNA$var
+new_company <- d_noNA %>%
+  rownames_to_column %>%
+  gather(var, value, -rowname) %>%
+  spread(rowname, value) %>%
+  mutate(var = as.numeric(var)) %>%
+  rename(`Company ID` = var) %>%
+  left_join(company[,c(1:3)], by = "Company ID") %>%
+  select(`Company ID`, Sector, Location, everything()) %>%
+  mutate_at(vars(`2015`,`2016`,`2017`,`2018`,`2019`), as.numeric) %>%
+  rename(year_2015 = `2015`, year_2016 = `2016`,
+         year_2017 = `2017`, year_2018 = `2018`,
+         year_2019 = `2019`) %>%
+  na.omit() %>%
+  mutate(Company_Total = year_2015+year_2016+year_2017+year_2018+year_2019) %>%
+  rename(`2015` = year_2015, `2016` = year_2016,
+         `2017` = year_2017, `2018` = year_2018,
+         `2019` = year_2019)  %>% 
+  pivot_longer(`2015`: `2019`, 
+               names_to = "Year")
+
+```
+
+
+## Insights on company data
+
+### Sector
+```{r}
+new_company %>%
+  group_by(`Company ID`) %>%
+  ggplot() +
+  geom_density(aes(log(Company_Total), fill = Sector, color = Sector), 
+               alpha = 0.8) +
+  labs(x = "Log(Company Total Emissions)") +
+  ggtitle("Distribution of Company Total Emissions",
+          "Waste and Transport are the dominant emission sources")
+```
+
+### Location
+```{r}
+new_company %>%
+  group_by(Location) %>%
+  summarise(Total_Emission = sum(Company_Total)) %>%
+  ggplot() +
+  geom_histogram(aes(log(Total_Emission)), fill = "darkred", alpha = 0.8) +
+  labs(x = "Log(Total Emission)")
+```
+
+### Sectors & Time
+
+```{r}
+new_company %>%
+  ggplot() +
+  geom_boxplot(aes(x = Sector, y = log(value), fill = Year)) +
+  labs(y = "Log(Company Yearly Emission)") +
+  ggtitle("Sectors Weights & Yearly Trend",
+          "The transport sector generate the most CO2e\nNo significant yearly trend within the sectors")
+```
+
+# Information about Pullanta
+```{r}
+Total_emission <- co2emission %>% filter(Type == "Emission_Total")
+
+corr_data <- country_data %>%
+  left_join(Total_emission, by = "Year") %>%
+  select(-Type) %>%
+  rename(Emission = value) %>%
+  select(Year, Emission, everything())
+
+corr <- round(cor(corr_data[-1] %>% scale()), 1)
+p.mat <- cor_pmat(corr_data[-1] %>% scale())
+ggcorrplot(corr, hc.order = T,
+           type = "lower", p.mat = p.mat)
+```
+
+From the correlation graph, the CO2E emission is correlated with 
+
+* Land Area 
+
+* Energy Use 
+
+* Population 
+
+* GDP
+
+**Specially, the emssion of greenhouse gases is highly correlated with the land area.** On the other hand, forested land, percent population, renewable energy consumption don't lay much impact on the emission of CO2e, which is quite unexpected. (*We did standardized the data by scaling and centralizing. But hence we are generating the correlation matrix, it doesn't really matter.*)
+As we look over the dataset, there exist huge gaps between renewable energy use and other energy consumptions. In other words, **the renewable energy in Pullanta had slow development over these years.**
+
+**Let's go down to the factors that mostly effect the greenhouse gases emission.**
+
+## GDP & Popultaion
+```{r fig.height=3.5, fig.width=8.5}
+GrowthRate <- country_data %>% 
+  # Population Rate
+  mutate(
+    Previous_Year = lag(population, 1), 
+    Change = population - Previous_Year, 
+    Population_Growth_Rate = Change/Previous_Year*100
+    ) %>%
+  # GDP Rate
+  mutate(
+    Previous_GDP = lag(gdp, 1),
+    Change_GDP = gdp - Previous_GDP,
+    GDP_Growth_Rate = Change_GDP/Previous_GDP*100
+  ) %>%
+  filter(Year != 2019, Year != 1995) %>%
+  pivot_longer(c(Population_Growth_Rate, GDP_Growth_Rate), names_to = "Growth_Rates")
+
+GrowthRate_GDP <- GrowthRate %>%
+  filter(Growth_Rates == "GDP_Growth_Rate") %>%
+  ggplot(aes(x = Year, y = value)) +
+  geom_line(size = 1.5) +
+  geom_smooth(linetype  = 2) +
+  scale_x_continuous(breaks = c(1995, 2000, 2005, 2010, 2015, 2018)) +
+  labs(y = "Rate(%)") +
+  ggtitle("GDP growth rate")
+GrowthRate_Pop <- GrowthRate %>%
+  filter(Growth_Rates == "Population_Growth_Rate") %>%
+  ggplot(aes(x = Year, y = value)) +
+  geom_line(size = 1.5) +
+  geom_smooth(linetype  = 2) +
+  scale_x_continuous(breaks = c(1995, 2000, 2005, 2010, 2015, 2018)) +
+  labs(y = "Rate(%)") +
+  ggtitle("Population growth rate")
+gridExtra::grid.arrange(GrowthRate_Pop, GrowthRate_GDP, nrow = 1)
+```
+
+## Energy Use
+
+```{r fig.height=3.5, fig.width=8.5}
+country_data %>% 
+  mutate(
+    Previous_Year = lag(energy_use, 1), 
+    Change = energy_use - Previous_Year, 
+    Energy_Growth_Rate = Change/Previous_Year*100
+  ) %>%
+  filter(Year != 2019, Year != 1995) %>%
+  ggplot(aes(x = Year, y = Energy_Growth_Rate)) +
+  geom_bar(aes(fill = Energy_Growth_Rate), stat = "identity") +
+  geom_smooth(linetype = 2, alpha = 0.3) +
+  theme(legend.position = "top") +
+  labs(y = "Rate(%)") +
+  ggtitle("Growth Rate of Energy")
+```
+
+## Land Area
+```{r fig.height=3.5, fig.width=8.5}
+country_data %>% 
+  mutate(
+    Previous_Year = lag(land_area, 1), 
+    Change = land_area - Previous_Year, 
+    Land_Growth_Rate = Change/Previous_Year*100
+  ) %>%
+  filter(Year != 2019, Year != 1995) %>%
+  ggplot(aes(x = Year, y = Land_Growth_Rate)) +
+  geom_bar(aes(fill = Land_Growth_Rate), stat = "identity") +
+  geom_smooth(linetype = 2, alpha = 0.3) +
+  theme(legend.position = "top") +
+  labs(y = "Rate(%)") +
+  ggtitle("Growth Rate of Land Use")
+```
+
+
+# Revenue and Expense
+## a) Aggregate Emission
+## b) Frequency and Limits
+## c) Social Cost of Carbon
+## d) Secondary Market
+## e) Consequences
+## f) Neighboring Countires
+
+# Design Financial Instruments 
+```{r}
+TES <- co2emission %>%
+  filter(Type != "Emission_Total") %>%
+  group_by(Type) %>%
+  summarise(TES = sum(value))
+TES <- TES %>%
+  mutate(prop = TES/sum(TES))
+TES %>%
+  ggplot(aes(x = "", y = prop, fill = Type)) +
+  geom_bar(stat = "identity") +
+  coord_polar("y") +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = 14)) +
+  geom_text(aes(label = paste0(round(prop,2)*100, "%")), 
+            position = position_stack(vjust = 0.5),
+            check_overlap = TRUE, # 查看是否重叠
+            fontface = "bold",
+            size = 5) +
+  ggtitle("Proportion: Each Sector")
+```
+
+## Compare & Constrast
+## Risks
+
+# Goverment perspective: Implementation
+# Enterprise perspective: Risk Management
+
+
